@@ -122,6 +122,10 @@ def parse_args():
         action='store_true', default=False,
         help='Skip the npm 0.x cleanup. Do cleanup by default.')
 
+    parser.add_option('--python-virtualenv', dest='python_virtualenv',
+                      action='store_true', default=False,
+                      help='Add node.js to an existing Python virtualenv')
+
     options, args = parser.parse_args()
 
     if not options.list:
@@ -358,14 +362,44 @@ def install_activate(env_dir, opt):
         writefile(file_path, content)
         os.chmod(file_path, 0755)
 
+def modify_python_activate(env_dir, opt):
+    """
+    Modify a Python virtual environment activation script for node.js
+    """
+    bin_dir = join(env_dir, 'bin')
+    mod_dir = join('lib', 'node_modules')
+
+    activate_path = join(bin_dir, 'activate')
+    activate_contents = open(activate_path).read()
+
+    nodeenv_fragment = '''
+
+_OLD_NODE_PATH="NODE_PATH"
+NODE_PATH="$VIRTUAL_ENV/__MOD_NAME__"
+export NODE_PATH
+'''.replace('__MOD_NAME__', mod_dir)
+
+    # Splice in this fragment where PATH is set
+    marker_string = 'PATH="$VIRTUAL_ENV/bin:$PATH"\nexport PATH'
+    first, second = activate_contents.split(marker_string)
+    activate_content = first + marker_string + nodeenv_fragment + second
+
+    writefile(activate_path, activate_content)
+    os.chmod(activate_path, 0755)
+
 
 def create_environment(env_dir, opt):
     """
     Creates a new environment in ``env_dir``.
     """
-    if os.path.exists(env_dir):
+    if not opt.python_virtualenv and os.path.exists(env_dir):
         logger.info(' * Environment already exists: %s', env_dir)
         sys.exit(2)
+    elif opt.python_virtualenv and \
+            not os.path.exists(join(env_dir,'bin','activate_this.py')):
+        logger.info(' * Not a Python virtualenv: %s', env_dir)
+        sys.exit(2)
+
     src_dir = abspath(join(env_dir, 'src'))
     mkdir(src_dir)
     save_env_options(env_dir, opt)
@@ -374,12 +408,15 @@ def create_environment(env_dir, opt):
     # activate script install must be
     # before npm install, npm use activate
     # for install
-    install_activate(env_dir, opt)
+    if opt.python_virtualenv:
+        modify_python_activate(env_dir, opt)
+    else:
+        install_activate(env_dir, opt)
+
     if not opt.without_npm:
         install_npm(env_dir, src_dir, opt)
     if opt.requirements:
         install_packages(env_dir, opt)
-
 
 def print_node_versions():
     """
